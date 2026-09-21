@@ -38,7 +38,7 @@
                               SelectedItem="{Binding SelectedExit}"
                               DisplayMemberPath="Label" />
                 </DockPanel>
-                <TextBlock Text="El resto de los programas sigue la VPN por defecto de Windows."
+                <TextBlock Text="Conecta la VPN y pulsa Actualizar. Aparece el adaptador, por ejemplo ProtonVPN (conectada). El resto de los programas sigue la VPN por defecto de Windows."
                            Foreground="{StaticResource MutedBrush}"
                            TextWrapping="Wrap"
                            Margin="0,0,0,14" />

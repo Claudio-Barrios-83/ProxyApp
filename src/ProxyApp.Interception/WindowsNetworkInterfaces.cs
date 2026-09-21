@@ -7,7 +7,16 @@ namespace ProxyApp.Interception;
 /// <summary>Un adaptador de red tal como lo ve Windows.</summary>
 public sealed record NetworkInterfaceChoice(string Name, string Description, uint Index, bool IsUp)
 {
-    public string Label => IsUp ? Name : $"{Name} (desconectada)";
+    public string Label
+    {
+        get
+        {
+            var same = string.IsNullOrWhiteSpace(Description)
+                || string.Equals(Name, Description, StringComparison.OrdinalIgnoreCase);
+            var title = same ? Name : $"{Name} — {Description}";
+            return IsUp ? $"{title} (conectada)" : $"{title} (desconectada)";
+        }
+    }
 }
 
 /// <summary>
@@ -18,17 +27,31 @@ public sealed record NetworkInterfaceChoice(string Name, string Description, uin
 public static class WindowsNetworkInterfaces
 {
     private const uint AddressFamilyInet = 2;
-    private const uint SkipNoise = 0x0002 | 0x0004 | 0x0008;
+    private const uint SkipNoise = 0x0002 | 0x0004 | 0x0008 | 0x0100;
     private const uint BufferOverflow = 111;
     private const int LoopbackType = 24;
     private const int TunnelType = 131;
     private const int UnicastInterface = 31;
+    private const int DescriptionOffset = 64;
+    private const int FriendlyNameOffset = 72;
+    private const int IfTypeOffset = 100;
+    private const int OperStatusOffset = 104;
 
     private static readonly string[] VpnHints =
     [
         "wireguard", "wintun", "cisco", "anyconnect", "secure client", "forti", "fortinet",
         "openvpn", "tap-windows", "vpn", "tunnel", "pangp", "globalprotect", "zscaler",
         "pulse", "juniper", "sonicwall", "tailscale", "zerotier", "netmotion",
+        "proton", "nordlynx", "nordvpn", "expressvpn", "surfshark", "mullvad", "windscribe",
+        "private internet", "cloudflare", "warp", "amnezia", "outline", "ivpn", "mozilla",
+        "cyberghost", "purevpn", "hotspot shield", "tunnelbear", "psiphon", "hide.me", "atlas",
+    ];
+
+    private static readonly string[] Noise =
+    [
+        "teredo", "isatap", "6to4", "iphttps", "wan miniport", "wi-fi direct", "wifi direct",
+        "bluetooth", "kernel debug", "qos packet", "virtualbox", "vmware", "vethernet",
+        "hyper-v", "wsl", "default switch", "npcap", "winpcap", "loopback",
     ];
 
     public static IReadOnlyList<NetworkInterfaceChoice> ListVpn()
@@ -41,7 +64,11 @@ public static class WindowsNetworkInterfaces
         var all = Read();
         var vpn = all.Where(item => IsVpn(item.Name, item.Description, item.IfType)).ToArray();
         var chosen = vpn.Length > 0 ? vpn : all.ToArray();
-        return chosen.Select(item => new NetworkInterfaceChoice(item.Name, item.Description, item.Index, item.Up)).ToArray();
+        return chosen
+            .Select(item => new NetworkInterfaceChoice(item.Name, item.Description, item.Index, item.Up))
+            .OrderByDescending(item => item.IsUp)
+            .ThenBy(item => item.Label, StringComparer.CurrentCultureIgnoreCase)
+            .ToArray();
     }
 
     public static uint? TryGetIndex(string interfaceName)
@@ -53,7 +80,8 @@ public static class WindowsNetworkInterfaces
 
         foreach (var item in Read())
         {
-            if (string.Equals(item.Name, interfaceName, StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(item.Name, interfaceName, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(item.Description, interfaceName, StringComparison.OrdinalIgnoreCase))
             {
                 return item.Index;
             }
@@ -74,12 +102,17 @@ public static class WindowsNetworkInterfaces
 
     private static bool IsVpn(string name, string description, int ifType)
     {
+        var text = name + " " + description;
+        if (Noise.Any(hint => text.Contains(hint, StringComparison.OrdinalIgnoreCase)))
+        {
+            return false;
+        }
+
         if (ifType == TunnelType)
         {
             return true;
         }
 
-        var text = name + " " + description;
         return VpnHints.Any(hint => text.Contains(hint, StringComparison.OrdinalIgnoreCase));
     }
 
@@ -106,11 +139,16 @@ public static class WindowsNetworkInterfaces
             var cursor = buffer;
             while (cursor != IntPtr.Zero)
             {
-                var ifType = Marshal.ReadInt32(cursor, 92);
-                var name = Marshal.PtrToStringUni(Marshal.ReadIntPtr(cursor, 64)) ?? "";
-                var description = Marshal.PtrToStringUni(Marshal.ReadIntPtr(cursor, 56)) ?? "";
+                var ifType = Marshal.ReadInt32(cursor, IfTypeOffset);
+                var description = ReadString(cursor, DescriptionOffset);
+                var name = ReadString(cursor, FriendlyNameOffset);
+                if (name.Length == 0)
+                {
+                    name = description;
+                }
+
                 var index = unchecked((uint)Marshal.ReadInt32(cursor, 4));
-                var up = Marshal.ReadInt32(cursor, 96) == 1;
+                var up = Marshal.ReadInt32(cursor, OperStatusOffset) == 1;
                 if (ifType != LoopbackType && index != 0 && name.Length > 0)
                 {
                     found.Add(new AdapterRow(name, description, index, up, ifType));
@@ -125,6 +163,12 @@ public static class WindowsNetworkInterfaces
         }
 
         return found;
+    }
+
+    private static string ReadString(IntPtr cursor, int offset)
+    {
+        var pointer = Marshal.ReadIntPtr(cursor, offset);
+        return pointer == IntPtr.Zero ? "" : Marshal.PtrToStringUni(pointer) ?? "";
     }
 
     private readonly record struct AdapterRow(string Name, string Description, uint Index, bool Up, int IfType);
