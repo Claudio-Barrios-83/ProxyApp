@@ -75,7 +75,6 @@ public sealed class ProcessNetworkFilter : IDisposable
     private readonly PacketPipeline _pipeline;
     private readonly SocketProcessMap _sockets = new();
     private readonly IProcessIdentityResolver _identities;
-    private readonly IConnectionPidResolver? _connectionPids;
     private readonly EngineSettings _settings;
     private readonly IFilterTrace? _trace;
     private readonly CancellationTokenSource _stop = new();
@@ -89,6 +88,7 @@ public sealed class ProcessNetworkFilter : IDisposable
     private WinDivert? _network;
     private WinDivert? _socketHandle;
     private int _started;
+    private long _seen;
 
     public ProcessNetworkFilter(
         RoutingRuleEngine rules,
@@ -106,9 +106,9 @@ public sealed class ProcessNetworkFilter : IDisposable
         _settings = settings ?? new EngineSettings();
         _engineProcessId = engineProcessId ?? Environment.ProcessId;
         _identities = identities;
-        _connectionPids = connectionPids;
+        _ = connectionPids;
         _trace = trace;
-        _networkFilter = BuildNetworkFilter(_settings.BlockQuicForManagedApps, udpRelay is not null);
+        _networkFilter = BuildNetworkFilter(udpRelay is not null);
         _pipeline = new PacketPipeline(
             rules,
             tcpRedirect,
@@ -118,26 +118,24 @@ public sealed class ProcessNetworkFilter : IDisposable
             passthroughEndpoints);
     }
 
+    public event Action<InterceptedFlow>? FlowOpened
+    {
+        add => _pipeline.FlowOpened += value;
+        remove => _pipeline.FlowOpened -= value;
+    }
+
     public int ActiveFlowCount => _pipeline.Flows.Count;
 
     /// <summary>
     /// Qué se desvía a modo usuario. Todo lo que entre aquí lo tiene que volver
-    /// a inyectar este proceso: si la cola se llena, el driver descarta y la
-    /// conexión afectada muere. Por eso el UDP del túnel de una VPN
-    /// (WireGuard en 51820, IKE en 500 o 4500) no se captura nunca. Solo se
-    /// mira UDP/443 cuando hay que cortar QUIC o cuando existe un relay.
+    /// a inyectar este proceso: si la cola se llena o el orden se altera, la
+    /// conexión afectada muere. El túnel de una VPN es UDP, y ProtonVPN llega a
+    /// levantar WireGuard sobre el puerto 443, así que no hay puerto UDP seguro
+    /// de capturar. Sin relay de UDP no se toca ni un datagrama: solo TCP, que
+    /// es lo único que este motor sabe secuestrar.
     /// </summary>
-    public static string BuildNetworkFilter(bool blockQuic, bool hasUdpRelay)
-    {
-        if (hasUdpRelay)
-        {
-            return "outbound and ip and (tcp or udp)";
-        }
-
-        return blockQuic
-            ? "outbound and ip and (tcp or (udp and udp.DstPort == 443))"
-            : "outbound and ip and tcp";
-    }
+    public static string BuildNetworkFilter(bool hasUdpRelay) =>
+        hasUdpRelay ? "outbound and ip and (tcp or udp)" : "outbound and ip and tcp";
 
     /// <summary>
     /// Lo consulta el listener al aceptar. La clave es el extremo remoto del
@@ -187,6 +185,7 @@ public sealed class ProcessNetworkFilter : IDisposable
         };
         socketThread.Start();
 
+        _trace?.Info($"Filtro de red: {_networkFilter}");
         _holdTimer = new Timer(_ => DrainHeld(), null, dueTime: 15, period: 15);
 
         var buffer = new byte[0xFFFF];
@@ -244,6 +243,12 @@ public sealed class ProcessNetworkFilter : IDisposable
         }
 
         var plan = _pipeline.Decide(parsed, () => ResolvePid(parsed), _identities.TryResolve);
+        Interlocked.Increment(ref _seen);
+        if (parsed.Protocol == TransportProtocol.Tcp && parsed.IsInitialSyn)
+        {
+            LogSyn(parsed, plan);
+        }
+
         if (plan.Fate == PacketFate.Hold)
         {
             Hold(packet, address);
@@ -251,6 +256,23 @@ public sealed class ProcessNetworkFilter : IDisposable
         }
 
         Apply(network, packet, address, plan);
+    }
+
+    /// <summary>
+    /// Cada intento de conexión nueva deja una línea. Es la única forma de
+    /// saber por qué un programa no aparece en el panel: o no casa la regla, o
+    /// no se resolvió el proceso, o la decisión fue dejarlo directo.
+    /// </summary>
+    private void LogSyn(ParsedIpv4Packet packet, PacketPlan plan)
+    {
+        if (_trace is null)
+        {
+            return;
+        }
+
+        var pid = ResolvePid(packet);
+        var exe = pid is null ? "proceso sin identificar" : _identities.TryResolve(pid.Value)?.ExecutablePath ?? $"pid {pid}";
+        _trace.Info($"SYN {packet.Source}:{packet.SourcePort} -> {packet.Destination}:{packet.DestinationPort} | {exe} | {plan.Fate}");
     }
 
     private void Apply(WinDivert network, ReadOnlySpan<byte> packet, WinDivertAddress address, PacketPlan plan)
@@ -315,6 +337,12 @@ public sealed class ProcessNetworkFilter : IDisposable
         }
     }
 
+    /// <summary>
+    /// El PID de un SYN lo da la capa SOCKET. Recorrer GetExtendedTcpTable
+    /// aquí era el camino lento: cada SYN de Chrome o Teams copiaba la tabla
+    /// TCP de Windows en el hilo que drena WinDivert, y el driver empezaba
+    /// a descartar. Proton se quedaba en "Conectando".
+    /// </summary>
     private int? ResolvePid(ParsedIpv4Packet packet)
     {
         if (_sockets.TryGet(
@@ -324,18 +352,6 @@ public sealed class ProcessNetworkFilter : IDisposable
                 packet.Destination,
                 packet.DestinationPort,
                 out var processId))
-        {
-            return processId;
-        }
-
-        if (_connectionPids is not null &&
-            _connectionPids.TryResolve(
-                packet.Protocol,
-                packet.Source,
-                packet.SourcePort,
-                packet.Destination,
-                packet.DestinationPort,
-                out processId))
         {
             return processId;
         }

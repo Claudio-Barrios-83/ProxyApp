@@ -91,6 +91,12 @@ public sealed class PacketPipeline
 
     public NatTable Flows { get; }
 
+    /// <summary>
+    /// El panel se llena aquí, no cuando el listener acepta. Si el túnel hacia
+    /// la VPN falla, la fila ya existe y el usuario ve el destino y el estado.
+    /// </summary>
+    public event Action<InterceptedFlow>? FlowOpened;
+
     public IPEndPoint TcpRedirect => _tcpRedirect;
 
     /// <summary>
@@ -126,10 +132,8 @@ public sealed class PacketPipeline
         }
 
         // Un segmento TCP sin flujo y sin SYN pertenece a una conexión que no
-        // vimos nacer: ya no se puede secuestrar. Se devuelve sin consultar el
-        // PID. Resolverlo aquí recorrería la tabla TCP de Windows en el mismo
-        // hilo que drena WinDivert, la cola se llenaría y el driver tiraría el
-        // UDP del túnel de Proton.
+        // vimos nacer: ya no se puede secuestrar. Se devuelve sin consultar
+        // el PID. El identificador llega de la capa SOCKET, no de una tabla.
         if (packet.Protocol == TransportProtocol.Tcp && !packet.IsInitialSyn)
         {
             return PacketPlan.Unchanged;
@@ -206,7 +210,7 @@ public sealed class PacketPipeline
 
         var redirect = packet.Protocol == TransportProtocol.Tcp ? _tcpRedirect : _udpRelay!;
 
-        Flows.Add(new InterceptedFlow
+        var flow = new InterceptedFlow
         {
             ProcessId = processId,
             ExecutablePath = identity.ExecutablePath,
@@ -214,7 +218,9 @@ public sealed class PacketPipeline
             OriginalDestination = new IPEndPoint(packet.Destination, packet.DestinationPort),
             Decision = decision,
             Protocol = packet.Protocol,
-        });
+        };
+        Flows.Add(flow);
+        FlowOpened?.Invoke(flow);
 
         // Solo se reescribe el destino. El origen se queda con la IP real de la
         // app para que accept() del listener vea quién conectó y para que la

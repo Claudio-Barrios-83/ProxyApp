@@ -182,11 +182,9 @@ public sealed class RoutingRuleEngine
 
     private static bool MatchesProcess(CompiledRule rule, ConnectionRequest request)
     {
-        var candidate = rule.Source.Process.MatchFullPath ? request.ExecutablePath : request.ExecutableName;
-
         foreach (var pattern in rule.ProcessPatterns)
         {
-            if (pattern.IsMatch(candidate))
+            if (pattern.IsMatch(request.ExecutableName) || pattern.IsMatch(request.ExecutablePath))
             {
                 return true;
             }

@@ -50,6 +50,10 @@ public partial class MainViewModel : ObservableObject
     public static string DefaultRulesPath =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ProxyApp", "rules.json");
 
+    /// <summary>Lo que vio el motor. Es lo que hay que mirar cuando el panel sale vacío.</summary>
+    public static string EngineLogPath =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ProxyApp", "engine.log");
+
     [ObservableProperty]
     private bool _isEngineEnabled;
 
@@ -309,15 +313,14 @@ public partial class MainViewModel : ObservableObject
                 _engine,
                 broker.ListenEndpoint,
                 new WindowsProcessIdentityResolver(),
-                new WindowsConnectionPidResolver(),
-                trace: new UiTrace(message => Post(() => StatusMessage = message)));
+                settings: new EngineSettings { BlockQuicForManagedApps = false },
+                trace: new UiTrace(EngineLogPath, message => Post(() => StatusMessage = message)));
+            filter.FlowOpened += OnFlowOpened;
 
             _session = session;
             _broker = broker;
             _filter = filter;
-            // Solo se secuestran conexiones nuevas: las que el programa ya tenía
-            // abiertas siguen por donde nacieron y no aparecen en el Dashboard.
-            StatusMessage = "Motor en marcha. Cierra y abre el programa para que use conexiones nuevas.";
+            StatusMessage = "Motor en marcha. Cierra y abre el programa para que use conexiones nuevas. El registro está en %LocalAppData%\\ProxyApp\\engine.log.";
 
             var token = session.Token;
             _ = Task.Run(() => broker.RunAsync(Resolve, token));
@@ -378,8 +381,24 @@ public partial class MainViewModel : ObservableObject
             _broker = null;
         }
 
-        _filter?.Dispose();
-        _filter = null;
+        if (_filter is not null)
+        {
+            _filter.FlowOpened -= OnFlowOpened;
+            _filter.Dispose();
+            _filter = null;
+        }
+    }
+
+    private void OnFlowOpened(InterceptedFlow flow)
+    {
+        var process = FileName(flow.ExecutablePath);
+        var destination = flow.OriginalDestination.ToString();
+        var proxy = flow.Decision.Node?.Kind == OutboundKind.NetworkAdapter
+            ? flow.Decision.Node.Adapter?.InterfaceName ?? "VPN"
+            : flow.Decision.Node?.Host is { Length: > 0 } host
+                ? $"{host}:{flow.Decision.Node.Port}"
+                : "salida";
+        OnTraffic(new TunnelTrafficUpdate(Guid.NewGuid(), DateTimeOffset.Now, process, destination, proxy, "Desviado", 0, 0));
     }
 
     private void OnTraffic(TunnelTrafficUpdate update)
@@ -531,13 +550,38 @@ public partial class MainViewModel : ObservableObject
         return slash < 0 ? path : path[(slash + 1)..];
     }
 
-    private sealed class UiTrace(Action<string> failure) : IFilterTrace
+    private sealed class UiTrace(string path, Action<string> failure) : IFilterTrace
     {
+        private readonly object _gate = new();
+
         public void Info(string message)
         {
+            Write("info", message, null);
         }
 
-        public void Failure(string message, Exception? exception = null) => failure(message);
+        public void Failure(string message, Exception? exception = null)
+        {
+            Write("error", message, exception);
+            failure(message);
+        }
+
+        private void Write(string level, string message, Exception? exception)
+        {
+            try
+            {
+                var line = exception is null
+                    ? $"{DateTime.Now:HH:mm:ss} {level} {message}{Environment.NewLine}"
+                    : $"{DateTime.Now:HH:mm:ss} {level} {message} {exception}{Environment.NewLine}";
+                lock (_gate)
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                    File.AppendAllText(path, line);
+                }
+            }
+            catch (IOException)
+            {
+            }
+        }
     }
 }
 
