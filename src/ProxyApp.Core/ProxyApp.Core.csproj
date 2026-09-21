@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    El motor de reglas es portable a propósito: así se puede testear en cualquier
+    SO. La parte que toca WinDivert vive en ProxyApp.Interop, que sí es net8.0-windows.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ProxyApp.Abstractions\ProxyApp.Abstractions.csproj" />
+  </ItemGroup>
+
+</Project>

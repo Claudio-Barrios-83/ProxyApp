@@ -1,0 +1,30 @@
+## Compilación
+bin/
+obj/
+artifacts/
+publish/
+ProxyApp-Windows-x64.zip
+*.user
+*.suo
+.vs/
+.idea/
+
+## Resultados de test
+TestResults/
+*.trx
+*.coverage
+coverage*.xml
+
+## Configuración local del usuario: contiene credenciales cifradas
+config/local-*.json
+config/*.db
+config/*.db-shm
+config/*.db-wal
+
+## Binarios de WinDivert: se descargan en el build, no se versionan
+third_party/windivert/**/*.sys
+third_party/windivert/**/*.dll
+
+## Instalador
+installer/**/*.msi
+installer/**/*.wixpdb

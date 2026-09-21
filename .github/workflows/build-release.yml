@@ -1,0 +1,70 @@
+name: build-release
+
+on:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Instalar .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Probar
+        run: dotnet test ProxyApp.sln -c Release --nologo
+
+      - name: Publicar ejecutable autocontenido
+        run: dotnet publish src/ProxyApp.UI/ProxyApp.UI.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o ./publish
+
+      - name: Copiar WinDivert.dll y WinDivert64.sys
+        shell: pwsh
+        run: ./build/fetch-windivert.ps1 -OutputDirectory ./publish
+
+      - name: Empaquetar ProxyApp-Windows-x64.zip
+        shell: pwsh
+        run: |
+          $required = @('ProxyApp.exe', 'WinDivert.dll', 'WinDivert64.sys')
+          foreach ($name in $required) {
+            if (-not (Test-Path (Join-Path './publish' $name))) {
+              throw "Falta $name en ./publish"
+            }
+          }
+          Compress-Archive -Path ./publish/* -DestinationPath ./ProxyApp-Windows-x64.zip -Force
+
+      - name: Subir artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: ProxyApp-Windows-x64
+          path: ProxyApp-Windows-x64.zip
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Descargar artefacto
+        uses: actions/download-artifact@v4
+        with:
+          name: ProxyApp-Windows-x64
+          path: dist
+
+      - name: Crear borrador de release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          gh release create "${{ github.ref_name }}" "dist/ProxyApp-Windows-x64.zip" --draft --title "${{ github.ref_name }}" --notes "Borrador generado por build-release. El ZIP incluye ProxyApp.exe, WinDivert.dll y WinDivert64.sys para Windows x64."

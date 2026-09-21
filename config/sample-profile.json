@@ -1,0 +1,98 @@
+{
+  "schemaVersion": 1,
+  "nodes": [
+    {
+      "id": "0f1b7d2e-8c4a-4a1e-9f3b-6d5c2a7e4b10",
+      "name": "WireGuard corporativo",
+      "kind": "networkAdapter",
+      "isEnabled": true,
+      "adapter": {
+        "interfaceName": "wg-corp",
+        "resolution": "byName"
+      }
+    },
+    {
+      "id": "b3a9c61d-5f42-4e8b-9a77-1c0e8d4f2a55",
+      "name": "OCI Frankfurt (SOCKS5)",
+      "kind": "socks5",
+      "isEnabled": true,
+      "host": "127.0.0.1",
+      "port": 1080,
+      "resolveHostnamesRemotely": true,
+      "supportsUdpAssociate": false,
+      "upstreamNodeId": "0f1b7d2e-8c4a-4a1e-9f3b-6d5c2a7e4b10",
+      "connectTimeout": "00:00:10"
+    },
+    {
+      "id": "c7e2f018-3b96-4d5a-8e21-9f6b4c3d1e77",
+      "name": "Proxy HTTP de la oficina",
+      "kind": "httpProxy",
+      "isEnabled": false,
+      "host": "proxy.interno.local",
+      "port": 8080,
+      "credentials": {
+        "username": "svc-proxyapp",
+        "protectedPassword": "AQAAANCMnd8BFdERjHoAwE_Cl-sBAAAA__SUSTITUIR_POR_DPAPI__"
+      }
+    },
+    {
+      "id": "d4f83a55-6e17-4c92-b0a8-2d7e5f9c8b31",
+      "name": "Bloquear",
+      "kind": "block",
+      "isEnabled": true
+    }
+  ],
+  "rules": [
+    {
+      "id": "11111111-1111-4111-8111-111111111111",
+      "name": "Colaboración vía OCI",
+      "priority": 10,
+      "isEnabled": true,
+      "process": {
+        "patterns": ["teams.exe", "ms-teams.exe", "slack.exe"],
+        "matchFullPath": false,
+        "includeChildProcesses": true
+      },
+      "target": {
+        "ports": ["443", "80"],
+        "protocol": "tcp"
+      },
+      "outboundNodeId": "b3a9c61d-5f42-4e8b-9a77-1c0e8d4f2a55",
+      "bypassPrivateNetworks": true
+    },
+    {
+      "id": "22222222-2222-4222-8222-222222222222",
+      "name": "Telemetría fuera",
+      "priority": 5,
+      "isEnabled": true,
+      "process": {
+        "patterns": ["*"]
+      },
+      "target": {
+        "hostPatterns": ["*.telemetry.microsoft.com", "*.events.data.microsoft.com"]
+      },
+      "outboundNodeId": "d4f83a55-6e17-4c92-b0a8-2d7e5f9c8b31",
+      "bypassPrivateNetworks": false
+    },
+    {
+      "id": "33333333-3333-4333-8333-333333333333",
+      "name": "Navegador solo por WireGuard",
+      "priority": 20,
+      "isEnabled": false,
+      "process": {
+        "patterns": ["C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"],
+        "matchFullPath": true
+      },
+      "outboundNodeId": "0f1b7d2e-8c4a-4a1e-9f3b-6d5c2a7e4b10",
+      "bypassPrivateNetworks": true
+    }
+  ],
+  "settings": {
+    "localRedirectPort": 0,
+    "enableFakeIpDns": true,
+    "fakeIpRange": "198.18.0.0/15",
+    "blockQuicForManagedApps": true,
+    "autoStartEngine": false,
+    "winDivertPriority": 0
+  }
+}

@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <!-- CA1707: los nombres de test usan guion bajo para separar escenario y expectativa.
+         CA1861: los arrays literales en asserts son deliberados, no hay coste real. -->
+    <NoWarn>$(NoWarn);CA1707;CA1861</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.0" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- El perfil de ejemplo se testea como contrato: si el modelo cambia y deja
+         de deserializarse, el fallo aparece aquí y no en el equipo del usuario. -->
+    <None Include="..\..\config\sample-profile.json" Link="sample-profile.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\ProxyApp.Abstractions\ProxyApp.Abstractions.csproj" />
+    <ProjectReference Include="..\..\src\ProxyApp.Core\ProxyApp.Core.csproj" />
+    <ProjectReference Include="..\..\src\ProxyApp.Persistence\ProxyApp.Persistence.csproj" />
+    <ProjectReference Include="..\..\src\ProxyApp.Socks5\ProxyApp.Socks5.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Contratos puros: sin P/Invoke, sin dependencias de Windows y sin NuGet.
+    Lo comparten el servicio, la UI, la CLI y los tests, así que debe seguir
+    compilando en cualquier RID.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+  </PropertyGroup>
+
+</Project>

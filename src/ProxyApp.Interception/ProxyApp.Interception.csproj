@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    SharpDivert es el binding mantenido de WinDivert 2.2. El paquete WinDivertSharp
+    1.4.3 se quedó sin la capa SOCKET, que es la única que entrega el PID.
+    El driver (WinDivert.dll + WinDivert64.sys) no viaja en el paquete: hay que
+    copiarlo junto al ejecutable en Windows. Este proyecto compila en cualquier
+    SO; el handle solo se abre cuando corre el filtro.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>ProxyApp.Interception</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SharpDivert" Version="1.1.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ProxyApp.Core\ProxyApp.Core.csproj" />
+  </ItemGroup>
+
+</Project>

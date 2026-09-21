@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <RootNamespace>ProxyApp.UI</RootNamespace>
+    <AssemblyName>ProxyApp</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.3.2" />
+    <PackageReference Include="H.NotifyIcon.Wpf" Version="2.2.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ProxyApp.Core\ProxyApp.Core.csproj" />
+    <ProjectReference Include="..\ProxyApp.Interception\ProxyApp.Interception.csproj" />
+    <ProjectReference Include="..\ProxyApp.Socks5\ProxyApp.Socks5.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="Assets\tray.png" />
+  </ItemGroup>
+
+</Project>
