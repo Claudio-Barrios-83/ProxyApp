@@ -22,7 +22,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Resource Include="Assets\tray.png" />
+    <Resource Include="Assets\tray.ico" />
   </ItemGroup>
 
 </Project>
