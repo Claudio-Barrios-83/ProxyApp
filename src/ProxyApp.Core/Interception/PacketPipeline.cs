@@ -125,14 +125,24 @@ public sealed class PacketPipeline
             return Forward(existing);
         }
 
+        // Un segmento TCP sin flujo y sin SYN pertenece a una conexión que no
+        // vimos nacer: ya no se puede secuestrar. Se devuelve sin consultar el
+        // PID. Resolverlo aquí recorrería la tabla TCP de Windows en el mismo
+        // hilo que drena WinDivert, la cola se llenaría y el driver tiraría el
+        // UDP del túnel de Proton.
+        if (packet.Protocol == TransportProtocol.Tcp && !packet.IsInitialSyn)
+        {
+            return PacketPlan.Unchanged;
+        }
+
+        // El UDP que llega hasta aquí no tiene flujo. Solo interesa si es de un
+        // proceso con regla, y el PID del UDP lo da la capa SOCKET, no una
+        // tabla. Si todavía no está, sale tal cual: retener o demorar el
+        // datagrama de WireGuard deja a ProtonVPN en "Conectando".
         var pid = resolvePid();
         if (pid is null)
         {
-            // Solo se retiene el SYN TCP inicial. El UDP (WireGuard, keepalives
-            // de ProtonVPN, QUIC ajeno) no espera PID: retenerlo rompe el túnel.
-            // Un ACK suelto sin estado ya pertenece a una conexión que no vimos
-            // nacer: dejarlo pasar es mejor que congelar tráfico que no podemos secuestrar.
-            return packet.Protocol == TransportProtocol.Tcp && packet.IsInitialSyn
+            return packet.Protocol == TransportProtocol.Tcp
                 ? PacketPlan.Hold
                 : PacketPlan.Unchanged;
         }

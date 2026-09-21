@@ -69,7 +69,6 @@ namespace ProxyApp.Interception;
 /// </remarks>
 public sealed class ProcessNetworkFilter : IDisposable
 {
-    private const string OutboundTraffic = "outbound and ip and (tcp or udp)";
     private const string SocketEvents = "(event == CONNECT or event == CLOSE) and (tcp or udp)";
     private static readonly TimeSpan PidWait = TimeSpan.FromMilliseconds(100);
 
@@ -84,6 +83,7 @@ public sealed class ProcessNetworkFilter : IDisposable
     private readonly object _holdGate = new();
     private readonly Queue<HeldPacket> _held = new();
     private readonly int _engineProcessId;
+    private readonly string _networkFilter;
 
     private Timer? _holdTimer;
     private WinDivert? _network;
@@ -108,6 +108,7 @@ public sealed class ProcessNetworkFilter : IDisposable
         _identities = identities;
         _connectionPids = connectionPids;
         _trace = trace;
+        _networkFilter = BuildNetworkFilter(_settings.BlockQuicForManagedApps, udpRelay is not null);
         _pipeline = new PacketPipeline(
             rules,
             tcpRedirect,
@@ -118,6 +119,25 @@ public sealed class ProcessNetworkFilter : IDisposable
     }
 
     public int ActiveFlowCount => _pipeline.Flows.Count;
+
+    /// <summary>
+    /// Qué se desvía a modo usuario. Todo lo que entre aquí lo tiene que volver
+    /// a inyectar este proceso: si la cola se llena, el driver descarta y la
+    /// conexión afectada muere. Por eso el UDP del túnel de una VPN
+    /// (WireGuard en 51820, IKE en 500 o 4500) no se captura nunca. Solo se
+    /// mira UDP/443 cuando hay que cortar QUIC o cuando existe un relay.
+    /// </summary>
+    public static string BuildNetworkFilter(bool blockQuic, bool hasUdpRelay)
+    {
+        if (hasUdpRelay)
+        {
+            return "outbound and ip and (tcp or udp)";
+        }
+
+        return blockQuic
+            ? "outbound and ip and (tcp or (udp and udp.DstPort == 443))"
+            : "outbound and ip and tcp";
+    }
 
     /// <summary>
     /// Lo consulta el listener al aceptar. La clave es el extremo remoto del
@@ -146,7 +166,7 @@ public sealed class ProcessNetworkFilter : IDisposable
         try
         {
             _socketHandle = new WinDivert(SocketEvents, WinDivert.Layer.Socket, 0, WinDivert.Flag.Sniff | WinDivert.Flag.RecvOnly);
-            _network = new WinDivert(OutboundTraffic, WinDivert.Layer.Network, _settings.WinDivertPriority, 0);
+            _network = new WinDivert(_networkFilter, WinDivert.Layer.Network, _settings.WinDivertPriority, 0);
         }
         catch
         {

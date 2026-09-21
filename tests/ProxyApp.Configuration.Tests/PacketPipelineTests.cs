@@ -150,6 +150,21 @@ public sealed class PacketPipelineTests
     }
 
     [Fact]
+    public void TcpSinFlujoYSinSyn_NoConsultaLaTablaDeConexiones()
+    {
+        var pipeline = Pipeline();
+        var consultas = 0;
+
+        var plan = pipeline.Decide(
+            Parse(Packet("10.0.0.5", 40000, "1.1.1.1", 443, 0x10)),
+            () => { consultas++; return AppPid; },
+            Identity);
+
+        Assert.Equal(PacketFate.ReinjectUnchanged, plan.Fate);
+        Assert.Equal(0, consultas);
+    }
+
+    [Fact]
     public void UdpSinPid_SaleSinRetener_ParaNoRomperWireGuard()
     {
         var pipeline = Pipeline();

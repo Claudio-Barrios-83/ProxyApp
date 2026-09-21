@@ -315,7 +315,9 @@ public partial class MainViewModel : ObservableObject
             _session = session;
             _broker = broker;
             _filter = filter;
-            StatusMessage = "Motor en marcha.";
+            // Solo se secuestran conexiones nuevas: las que el programa ya tenía
+            // abiertas siguen por donde nacieron y no aparecen en el Dashboard.
+            StatusMessage = "Motor en marcha. Cierra y abre el programa para que use conexiones nuevas.";
 
             var token = session.Token;
             _ = Task.Run(() => broker.RunAsync(Resolve, token));
