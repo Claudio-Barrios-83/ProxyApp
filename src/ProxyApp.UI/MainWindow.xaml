@@ -45,29 +45,17 @@
 
         <tb:TaskbarIcon x:Name="TrayIcon"
                         Grid.Row="1"
-                        Width="16"
-                        Height="16"
-                        Opacity="0"
-                        IsHitTestVisible="False"
-                        Focusable="False"
-                        HorizontalAlignment="Left"
-                        VerticalAlignment="Top"
+                        Width="0"
+                        Height="0"
                         ToolTipText="ProxyApp"
                         TrayMouseDoubleClick="TrayIcon_OnDoubleClick">
-            <tb:TaskbarIcon.IconSource>
-                <tb:GeneratedIconSource Text="P"
-                                        FontSize="28"
-                                        FontWeight="Bold"
-                                        Foreground="White"
-                                        Background="#FF3D8BFF" />
-            </tb:TaskbarIcon.IconSource>
             <tb:TaskbarIcon.ContextMenu>
-                <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
-                    <MenuItem Header="Activar" Command="{Binding EnableCommand}" />
-                    <MenuItem Header="Desactivar" Command="{Binding DisableCommand}" />
+                <ContextMenu>
+                    <MenuItem Header="Activar" Click="Activate_OnClick" />
+                    <MenuItem Header="Desactivar" Click="Deactivate_OnClick" />
                     <Separator />
-                    <MenuItem Header="Abrir" Command="{Binding OpenCommand}" />
-                    <MenuItem Header="Salir" Command="{Binding ExitCommand}" />
+                    <MenuItem Header="Abrir" Click="Open_OnClick" />
+                    <MenuItem Header="Salir" Click="Exit_OnClick" />
                 </ContextMenu>
             </tb:TaskbarIcon.ContextMenu>
         </tb:TaskbarIcon>
