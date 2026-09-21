@@ -73,7 +73,7 @@ public sealed class RoutingRuleEngine
             RemotePort = targetPort,
         });
 
-        if (decision.Action != RouteAction.Proxy || decision.MatchedRule is null)
+        if (decision.Action is not (RouteAction.Proxy or RouteAction.BindAdapter) || decision.MatchedRule is null)
         {
             return Proxy.Direct;
         }

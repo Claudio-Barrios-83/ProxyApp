@@ -37,8 +37,11 @@ public partial class MainViewModel : ObservableObject
         _files = files;
         _rulesPath = rulesPath ?? DefaultRulesPath;
         _ui = SynchronizationContext.Current;
+        RefreshExits();
         LoadRules();
     }
+
+    public ObservableCollection<ExitChoice> Exits { get; } = [];
 
     public ObservableCollection<TrafficRow> Traffic { get; } = [];
 
@@ -73,6 +76,14 @@ public partial class MainViewModel : ObservableObject
 
     [ObservableProperty]
     private bool _bypassLocal = true;
+
+    [ObservableProperty]
+    private ExitChoice? _selectedExit;
+
+    [ObservableProperty]
+    private bool _isSocksExit = true;
+
+    partial void OnSelectedExitChanged(ExitChoice? value) => IsSocksExit = value is null || value.IsSocks;
 
     public void Shutdown()
     {
@@ -109,7 +120,11 @@ public partial class MainViewModel : ObservableObject
         ExecutablePath = "";
         ProcessPattern = value.ProcessName;
         ProxyHost = value.TargetProxy.Host ?? "";
-        ProxyPort = value.TargetProxy.Port.ToString(CultureInfo.InvariantCulture);
+        ProxyPort = value.TargetProxy.Port == 0 ? "" : value.TargetProxy.Port.ToString(CultureInfo.InvariantCulture);
+        SelectedExit = value.TargetProxy.Type == ProxyType.Adapter
+            ? Exits.FirstOrDefault(item => !item.IsSocks && string.Equals(item.InterfaceName, value.TargetProxy.Host, StringComparison.OrdinalIgnoreCase))
+              ?? EnsureExit(value.TargetProxy.Host ?? "")
+            : Exits.FirstOrDefault(item => item.IsSocks);
         RuleEnabled = value.IsEnabled;
         BypassLocal = value.BypassLocalNetwork;
     }
@@ -165,6 +180,7 @@ public partial class MainViewModel : ObservableObject
         ProcessPattern = "";
         ProxyHost = "";
         ProxyPort = "";
+        SelectedExit = Exits.FirstOrDefault(item => !item.IsSocks) ?? Exits.FirstOrDefault();
         RuleEnabled = true;
         BypassLocal = true;
         StatusMessage = "Nueva regla.";
@@ -180,18 +196,31 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
-        if (!int.TryParse(ProxyPort, NumberStyles.None, CultureInfo.InvariantCulture, out var port))
+        Proxy proxy;
+        if (SelectedExit is { IsSocks: false } vpn)
         {
-            StatusMessage = "El puerto del proxy tiene que estar entre 1 y 65535.";
-            return;
+            proxy = new Proxy
+            {
+                Type = ProxyType.Adapter,
+                Host = vpn.InterfaceName,
+                Port = 0,
+            };
         }
-
-        var proxy = new Proxy
+        else
         {
-            Type = ProxyType.Socks5,
-            Host = ProxyHost.Trim(),
-            Port = port,
-        };
+            if (!int.TryParse(ProxyPort, NumberStyles.None, CultureInfo.InvariantCulture, out var port))
+            {
+                StatusMessage = "El puerto del proxy tiene que estar entre 1 y 65535.";
+                return;
+            }
+
+            proxy = new Proxy
+            {
+                Type = ProxyType.Socks5,
+                Host = ProxyHost.Trim(),
+                Port = port,
+            };
+        }
         var errors = proxy.Validate();
         if (errors.Count > 0)
         {
@@ -274,7 +303,7 @@ public partial class MainViewModel : ObservableObject
         ProcessNetworkFilter? filter = null;
         try
         {
-            broker = new TunnelBroker();
+            broker = new TunnelBroker(WindowsNetworkInterfaces.TryGetIndex, WindowsNetworkInterfaces.Bind);
             broker.TrafficChanged += OnTraffic;
             filter = new ProcessNetworkFilter(
                 _engine,
@@ -380,6 +409,48 @@ public partial class MainViewModel : ObservableObject
         });
     }
 
+    [RelayCommand]
+    private void RefreshExits()
+    {
+        var previous = SelectedExit?.InterfaceName;
+        var wasSocks = SelectedExit?.IsSocks ?? true;
+        Exits.Clear();
+        Exits.Add(ExitChoice.Socks());
+        foreach (var adapter in WindowsNetworkInterfaces.ListVpn())
+        {
+            Exits.Add(new ExitChoice
+            {
+                Label = adapter.Label,
+                InterfaceName = adapter.Name,
+                IsSocks = false,
+            });
+        }
+
+        SelectedExit = wasSocks
+            ? Exits[0]
+            : Exits.FirstOrDefault(item => string.Equals(item.InterfaceName, previous, StringComparison.OrdinalIgnoreCase))
+              ?? Exits.FirstOrDefault(item => !item.IsSocks)
+              ?? Exits[0];
+    }
+
+    private ExitChoice EnsureExit(string interfaceName)
+    {
+        var existing = Exits.FirstOrDefault(item => string.Equals(item.InterfaceName, interfaceName, StringComparison.OrdinalIgnoreCase));
+        if (existing is not null)
+        {
+            return existing;
+        }
+
+        var created = new ExitChoice
+        {
+            Label = interfaceName + " (no está conectada)",
+            InterfaceName = interfaceName,
+            IsSocks = false,
+        };
+        Exits.Add(created);
+        return created;
+    }
+
     private void LoadRules()
     {
         if (!File.Exists(_rulesPath))
@@ -466,4 +537,20 @@ public partial class MainViewModel : ObservableObject
 
         public void Failure(string message, Exception? exception = null) => failure(message);
     }
+}
+
+public sealed class ExitChoice
+{
+    public static ExitChoice Socks() => new()
+    {
+        Label = "Proxy SOCKS5",
+        InterfaceName = "",
+        IsSocks = true,
+    };
+
+    public required string Label { get; init; }
+
+    public required string InterfaceName { get; init; }
+
+    public bool IsSocks { get; init; }
 }

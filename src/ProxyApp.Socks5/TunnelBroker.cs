@@ -24,10 +24,14 @@ public sealed record TunnelTrafficUpdate(
 public sealed class TunnelBroker : IDisposable
 {
     private readonly TcpListener _listener;
+    private readonly Func<string, uint?>? _adapterIndex;
+    private readonly Action<Socket, uint>? _bindAdapter;
     private int _disposed;
 
-    public TunnelBroker()
+    public TunnelBroker(Func<string, uint?>? adapterIndex = null, Action<Socket, uint>? bindAdapter = null)
     {
+        _adapterIndex = adapterIndex;
+        _bindAdapter = bindAdapter;
         _listener = new TcpListener(IPAddress.Loopback, 0);
         _listener.Start();
     }
@@ -84,18 +88,26 @@ public sealed class TunnelBroker : IDisposable
             }
 
             var flow = resolve(remote);
-            if (flow?.Decision.Node is not { } node || string.IsNullOrWhiteSpace(node.Host))
+            if (flow?.Decision.Node is not { } node)
             {
                 return;
             }
 
             process = FileName(flow.ExecutablePath);
             destination = flow.OriginalDestination.ToString();
-            proxy = $"{node.Host}:{node.Port}";
+            proxy = node.Kind == OutboundKind.NetworkAdapter
+                ? node.Adapter?.InterfaceName ?? "VPN"
+                : $"{node.Host}:{node.Port}";
 
-            if (node.Kind != OutboundKind.Socks5)
+            if (node.Kind == OutboundKind.NetworkAdapter)
             {
-                Publish(new TunnelTrafficUpdate(id, time, process, destination, proxy, "Solo SOCKS5", 0, 0));
+                await RelayAdapterAsync(client, flow, id, time, process, destination, proxy, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            if (node.Kind != OutboundKind.Socks5 || string.IsNullOrWhiteSpace(node.Host))
+            {
+                Publish(new TunnelTrafficUpdate(id, time, process, destination, proxy, "Salida no soportada", 0, 0));
                 return;
             }
 
@@ -126,6 +138,48 @@ public sealed class TunnelBroker : IDisposable
         finally
         {
             client.Dispose();
+        }
+    }
+
+    private async Task RelayAdapterAsync(
+        TcpClient client,
+        InterceptedFlow flow,
+        Guid id,
+        DateTimeOffset time,
+        string process,
+        string destination,
+        string proxy,
+        CancellationToken cancellationToken)
+    {
+        var interfaceName = flow.Decision.Node?.Adapter?.InterfaceName;
+        if (string.IsNullOrWhiteSpace(interfaceName))
+        {
+            Publish(new TunnelTrafficUpdate(id, time, process, destination, proxy, "La regla no tiene VPN.", 0, 0));
+            return;
+        }
+
+        var index = _adapterIndex?.Invoke(interfaceName);
+        if (index is null or 0)
+        {
+            Publish(new TunnelTrafficUpdate(id, time, process, destination, proxy, $"No encuentro la VPN '{interfaceName}'. Conéctala y pulsa Actualizar.", 0, 0));
+            return;
+        }
+
+        Publish(new TunnelTrafficUpdate(id, time, process, destination, proxy, "Abierto", 0, 0));
+        var upstream = new TcpClient(AddressFamily.InterNetwork) { NoDelay = true };
+        try
+        {
+            _bindAdapter?.Invoke(upstream.Client, index.Value);
+            await upstream.ConnectAsync(flow.OriginalDestination.Address, flow.OriginalDestination.Port, cancellationToken).ConfigureAwait(false);
+            IProgress<Socks5RelaySnapshot> progress = new InlineProgress(snapshot =>
+                Publish(new TunnelTrafficUpdate(id, time, process, destination, proxy, "Activo", snapshot.BytesToProxy, snapshot.BytesFromProxy)));
+            var result = await Socks5Client.RelayAsync(client.GetStream(), upstream.GetStream(), progress, cancellationToken).ConfigureAwait(false);
+            var status = result.AbruptClose ? "Cortado" : "Cerrado";
+            Publish(new TunnelTrafficUpdate(id, time, process, destination, proxy, status, result.BytesToProxy, result.BytesFromProxy));
+        }
+        finally
+        {
+            upstream.Dispose();
         }
     }
 

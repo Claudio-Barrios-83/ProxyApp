@@ -38,6 +38,23 @@ public sealed class PacketPipelineTests
     }
 
     [Fact]
+    public void SynDeTeams_PorVpn_TambienSeDesviaAlListener()
+    {
+        var adapter = TestProfiles.AdapterNode();
+        var engine = new RoutingRuleEngine(new ConfigurationDocument
+        {
+            Nodes = [adapter],
+            Rules = [TestProfiles.Rule("Teams por WireGuard", TestProfiles.AdapterNodeId, ["teams.exe"])],
+        });
+        var pipeline = Pipeline(engine);
+        var plan = pipeline.Decide(Parse(Packet("10.0.0.5", 40000, "52.113.194.132", 443, 0x02)), () => AppPid, Identity);
+
+        Assert.Equal(PacketFate.ReinjectModified, plan.Fate);
+        Assert.Equal(Redirect.Port, plan.NewDestinationPort);
+        Assert.Equal(OutboundKind.NetworkAdapter, pipeline.Flows.TryGet(TransportProtocol.Tcp, IPAddress.Parse("10.0.0.5"), 40000, out var flow) ? flow.Decision.Node!.Kind : OutboundKind.Direct);
+    }
+
+    [Fact]
     public void SynAckDelListener_RestauraElServidorOriginal_YEntraPorElLadoInbound()
     {
         var pipeline = Pipeline();

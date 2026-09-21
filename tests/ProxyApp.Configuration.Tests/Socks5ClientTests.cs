@@ -199,6 +199,57 @@ public sealed class Socks5ClientTests
         await running.WaitAsync(TimeSpan.FromSeconds(2));
     }
 
+    [Fact]
+    public async Task Broker_SalePorElAdaptadorNombrado()
+    {
+        using var echo = new TcpListener(IPAddress.Loopback, 0);
+        echo.Start();
+        var echoPort = ((IPEndPoint)echo.LocalEndpoint).Port;
+        var accepted = echo.AcceptTcpClientAsync();
+
+        var node = TestProfiles.AdapterNode();
+        var rule = TestProfiles.Rule("teams", node.Id, ["teams.exe"]);
+        var flow = new InterceptedFlow
+        {
+            ProcessId = 10,
+            ExecutablePath = @"C:\Program Files\Teams\teams.exe",
+            Client = new IPEndPoint(IPAddress.Loopback, 9),
+            OriginalDestination = new IPEndPoint(IPAddress.Loopback, echoPort),
+            Decision = RouteDecision.Through(rule, [node]),
+            Protocol = TransportProtocol.Tcp,
+        };
+
+        uint? seen = null;
+        using var broker = new TunnelBroker(_ => 15, (_, index) => seen = index);
+        var updates = new List<TunnelTrafficUpdate>();
+        broker.TrafficChanged += update =>
+        {
+            lock (updates)
+            {
+                updates.Add(update);
+            }
+        };
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var running = broker.RunAsync(_ => flow, cts.Token);
+
+        using var app = new TcpClient();
+        await app.ConnectAsync(IPAddress.Loopback, broker.ListenEndpoint.Port);
+        await app.GetStream().WriteAsync("ping"u8.ToArray());
+        using var server = await accepted;
+        var inbound = new byte[4];
+        await server.GetStream().ReadExactlyAsync(inbound);
+        await server.GetStream().WriteAsync(inbound);
+        var echoBack = new byte[4];
+        await app.GetStream().ReadExactlyAsync(echoBack);
+
+        Assert.Equal("ping", Encoding.ASCII.GetString(echoBack));
+        Assert.Equal(15u, seen);
+        cts.Cancel();
+        server.Dispose();
+        echo.Stop();
+        await running.WaitAsync(TimeSpan.FromSeconds(2));
+    }
+
     private static Socks5ClientOptions Once() => new()
     {
         MaxHandshakeAttempts = 1,

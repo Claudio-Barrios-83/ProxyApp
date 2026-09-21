@@ -15,6 +15,9 @@ public enum ProxyType
 
     /// <summary>Proxy HTTP con CONNECT.</summary>
     Http = 2,
+
+    /// <summary>Salida por un adaptador de Windows, por ejemplo una VPN ya conectada.</summary>
+    Adapter = 3,
 }
 
 /// <summary>Usuario y contraseña del proxy, en claro y solo en memoria.</summary>
@@ -48,6 +51,13 @@ public sealed record Proxy
         if (IsDirect)
         {
             return [];
+        }
+
+        if (Type == ProxyType.Adapter)
+        {
+            return string.IsNullOrWhiteSpace(Host)
+                ? ["Elige la VPN por la que debe salir el programa."]
+                : [];
         }
 
         var errors = new List<string>();
@@ -90,6 +100,11 @@ public sealed record Rule
     /// de rangos locales) sale directo aunque el proceso case.
     /// </summary>
     public bool BypassLocalNetwork { get; init; } = true;
+
+    /// <summary>Texto corto para la lista: nombre de VPN, o host y puerto del proxy.</summary>
+    public string ExitLabel => TargetProxy.Type == ProxyType.Adapter
+        ? TargetProxy.Host ?? ""
+        : $"{TargetProxy.Host}:{TargetProxy.Port}";
 
     public IReadOnlyList<string> Validate()
     {
@@ -135,11 +150,15 @@ public sealed record Rule
         {
             ProxyType.Socks5 => OutboundKind.Socks5,
             ProxyType.Http => OutboundKind.HttpProxy,
+            ProxyType.Adapter => OutboundKind.NetworkAdapter,
             _ => OutboundKind.Direct,
         },
         IsEnabled = true,
-        Host = TargetProxy.Host,
-        Port = TargetProxy.Port,
+        Host = TargetProxy.Type == ProxyType.Adapter ? null : TargetProxy.Host,
+        Port = TargetProxy.Type == ProxyType.Adapter ? 0 : TargetProxy.Port,
+        Adapter = TargetProxy.Type == ProxyType.Adapter
+            ? new AdapterBinding { InterfaceName = TargetProxy.Host!.Trim() }
+            : null,
         Credentials = TargetProxy.Auth is null
             ? null
             : new ProxyCredentials
