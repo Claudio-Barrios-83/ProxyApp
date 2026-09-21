@@ -35,8 +35,13 @@
                 <DockPanel Margin="0,0,0,6">
                     <Button DockPanel.Dock="Right" Content="Actualizar" Command="{Binding RefreshExitsCommand}" Margin="8,0,0,0" />
                     <ComboBox ItemsSource="{Binding Exits}"
-                              SelectedItem="{Binding SelectedExit}"
-                              DisplayMemberPath="Label" />
+                              SelectedItem="{Binding SelectedExit}">
+                        <ComboBox.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding Label}" TextWrapping="NoWrap" />
+                            </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                    </ComboBox>
                 </DockPanel>
                 <TextBlock Text="Conecta la VPN y pulsa Actualizar. Aparece el adaptador, por ejemplo ProtonVPN (conectada). El resto de los programas sigue la VPN por defecto de Windows."
                            Foreground="{StaticResource MutedBrush}"

@@ -52,6 +52,16 @@ public static class WindowsNetworkInterfaces
         "teredo", "isatap", "6to4", "iphttps", "wan miniport", "wi-fi direct", "wifi direct",
         "bluetooth", "kernel debug", "qos packet", "virtualbox", "vmware", "vethernet",
         "hyper-v", "wsl", "default switch", "npcap", "winpcap", "loopback",
+        "lightweight filter", "ndis filter", "wfp", "filter driver", "microsoft wi-fi",
+        "intel(r) wi-fi", "intel(r) ethernet", "realtek", "killer ethernet", "npcap loopback",
+    ];
+
+    private static readonly string[] StrongVpn =
+    [
+        "wireguard", "wintun", "proton", "anyconnect", "secure client", "forticlient",
+        "ssl vpn", "virtual ethernet", "tap-windows", "openvpn", "pangp", "globalprotect",
+        "zscaler", "nordlynx", "nordvpn", "mullvad", "tailscale", "zerotier", "cloudflare",
+        "warp", "amnezia", "expressvpn", "surfshark",
     ];
 
     public static IReadOnlyList<NetworkInterfaceChoice> ListVpn()
@@ -108,13 +118,27 @@ public static class WindowsNetworkInterfaces
             return false;
         }
 
-        if (ifType == TunnelType)
+        var strong = StrongVpn.Any(hint => text.Contains(hint, StringComparison.OrdinalIgnoreCase));
+        if (ifType == TunnelType || strong)
         {
             return true;
         }
 
+        // "forti" en la descripción de un Wi-Fi físico no es una VPN.
+        if (LooksLikePhysicalNic(text))
+        {
+            return false;
+        }
+
         return VpnHints.Any(hint => text.Contains(hint, StringComparison.OrdinalIgnoreCase));
     }
+
+    private static bool LooksLikePhysicalNic(string text) =>
+        text.Contains("wi-fi", StringComparison.OrdinalIgnoreCase)
+        || text.Contains("wifi", StringComparison.OrdinalIgnoreCase)
+        || text.Contains("wireless", StringComparison.OrdinalIgnoreCase)
+        || text.Contains("wlan", StringComparison.OrdinalIgnoreCase)
+        || text.Contains("ethernet", StringComparison.OrdinalIgnoreCase);
 
     private static List<AdapterRow> Read()
     {

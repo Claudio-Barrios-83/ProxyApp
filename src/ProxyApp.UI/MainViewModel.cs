@@ -553,4 +553,6 @@ public sealed class ExitChoice
     public required string InterfaceName { get; init; }
 
     public bool IsSocks { get; init; }
+
+    public override string ToString() => Label;
 }

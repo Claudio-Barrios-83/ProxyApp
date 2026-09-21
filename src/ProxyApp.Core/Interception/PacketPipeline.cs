@@ -128,10 +128,11 @@ public sealed class PacketPipeline
         var pid = resolvePid();
         if (pid is null)
         {
-            // Solo el primer segmento se retiene. Un ACK suelto sin estado ya
-            // pertenece a una conexión que no vimos nacer: dejarlo pasar es
-            // mejor que congelar tráfico que no podemos secuestrar.
-            return packet.IsInitialSyn || packet.Protocol == TransportProtocol.Udp
+            // Solo se retiene el SYN TCP inicial. El UDP (WireGuard, keepalives
+            // de ProtonVPN, QUIC ajeno) no espera PID: retenerlo rompe el túnel.
+            // Un ACK suelto sin estado ya pertenece a una conexión que no vimos
+            // nacer: dejarlo pasar es mejor que congelar tráfico que no podemos secuestrar.
+            return packet.Protocol == TransportProtocol.Tcp && packet.IsInitialSyn
                 ? PacketPlan.Hold
                 : PacketPlan.Unchanged;
         }

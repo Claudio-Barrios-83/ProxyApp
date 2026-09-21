@@ -150,6 +150,29 @@ public sealed class PacketPipelineTests
     }
 
     [Fact]
+    public void UdpSinPid_SaleSinRetener_ParaNoRomperWireGuard()
+    {
+        var pipeline = Pipeline();
+        var wireguard = Parse(Udp("10.0.0.5", 51820, "193.0.0.1", 51820));
+
+        Assert.Equal(PacketFate.ReinjectUnchanged, pipeline.Decide(wireguard, () => null, Identity).Fate);
+        Assert.Equal(0, pipeline.ActiveCount());
+    }
+
+    [Fact]
+    public void UdpDeProcesoAjeno_SaleSinTraducir()
+    {
+        var pipeline = Pipeline();
+        var plan = pipeline.Decide(
+            Parse(Udp("10.0.0.5", 51820, "193.0.0.1", 51820)),
+            () => 99,
+            _ => new ProcessIdentity(@"C:\Program Files\Proton\ProtonVPN.Service.exe", null));
+
+        Assert.Equal(PacketFate.ReinjectUnchanged, plan.Fate);
+        Assert.Equal(0, pipeline.ActiveCount());
+    }
+
+    [Fact]
     public void MapaDeSockets_DesbloqueaElSynRetenido()
     {
         var map = new SocketProcessMap();
