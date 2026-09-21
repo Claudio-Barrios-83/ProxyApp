@@ -1,13 +1,17 @@
 <UserControl x:Class="ProxyApp.UI.Views.DashboardView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-    <DataGrid ItemsSource="{Binding Traffic}">
+    <DataGrid ItemsSource="{Binding Traffic}"
+              EnableColumnVirtualization="False"
+              ScrollViewer.CanContentScroll="True"
+              ScrollViewer.HorizontalScrollBarVisibility="Auto"
+              ScrollViewer.VerticalScrollBarVisibility="Auto">
         <DataGrid.Columns>
             <DataGridTextColumn Header="Hora" Binding="{Binding Time}" Width="90" />
             <DataGridTextColumn Header="Proceso" Binding="{Binding Process}" Width="160" />
-            <DataGridTextColumn Header="Destino Original" Binding="{Binding OriginalDestination}" Width="*" />
+            <DataGridTextColumn Header="Destino Original" Binding="{Binding OriginalDestination}" Width="220" />
             <DataGridTextColumn Header="Proxy Usado" Binding="{Binding Proxy}" Width="160" />
-            <DataGridTextColumn Header="Estado" Binding="{Binding Status}" Width="110" />
+            <DataGridTextColumn Header="Estado" Binding="{Binding Status}" Width="140" />
             <DataGridTextColumn Header="KB Enviados/Recibidos" Binding="{Binding Volume}" Width="180" />
         </DataGrid.Columns>
     </DataGrid>

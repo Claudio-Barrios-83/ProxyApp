@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.Globalization;
 using System.IO;
 using System.Net;
+using System.Security.Principal;
 using System.Windows;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -251,6 +252,20 @@ public partial class MainViewModel : ObservableObject
 
     private void Start()
     {
+        if (!IsAdministrator())
+        {
+            FailStart(_generation, new InvalidOperationException("Hay que ejecutar ProxyApp como administrador para cargar el filtro de red."));
+            return;
+        }
+
+        var directory = AppContext.BaseDirectory;
+        if (!File.Exists(Path.Combine(directory, "WinDivert.dll")) || !File.Exists(Path.Combine(directory, "WinDivert64.sys")))
+        {
+            FailStart(_generation, new FileNotFoundException("Faltan WinDivert.dll y WinDivert64.sys junto a ProxyApp.exe."));
+            return;
+        }
+
+        StatusMessage = "Arrancando motor…";
         var generation = ++_generation;
         StopCore();
 
@@ -429,6 +444,12 @@ public partial class MainViewModel : ObservableObject
         }
 
         _ui.Post(_ => action(), null);
+    }
+
+    private static bool IsAdministrator()
+    {
+        using var identity = WindowsIdentity.GetCurrent();
+        return new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator);
     }
 
     private static string FileName(string path)

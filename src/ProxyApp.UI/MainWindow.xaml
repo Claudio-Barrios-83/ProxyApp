@@ -43,8 +43,12 @@
         </Border>
 
         <tb:TaskbarIcon x:Name="TrayIcon"
+                        Grid.Row="1"
                         Width="0"
                         Height="0"
+                        Margin="0"
+                        IsHitTestVisible="False"
+                        Focusable="False"
                         HorizontalAlignment="Left"
                         VerticalAlignment="Top"
                         IconSource="pack://application:,,,/Assets/tray.png"
