@@ -31,40 +31,16 @@
                 </DockPanel>
                 <TextBlock Text="{Binding ExecutablePath}" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,-8,0,14" />
 
-                <TextBlock Text="Salida" Style="{StaticResource FieldLabel}" />
-                <DockPanel Margin="0,0,0,6">
-                    <Button DockPanel.Dock="Right" Content="Actualizar" Command="{Binding RefreshExitsCommand}" Margin="8,0,0,0" />
-                    <ComboBox ItemsSource="{Binding Exits}"
-                              SelectedItem="{Binding SelectedExit}">
-                        <ComboBox.ItemTemplate>
-                            <DataTemplate>
-                                <TextBlock Text="{Binding Label}" TextWrapping="NoWrap" />
-                            </DataTemplate>
-                        </ComboBox.ItemTemplate>
-                    </ComboBox>
-                </DockPanel>
-                <TextBlock Text="Conecta la VPN y pulsa Actualizar. Aparece el adaptador, por ejemplo ProtonVPN (conectada). El resto de los programas sigue la VPN por defecto de Windows."
+                <TextBlock Text="Proxy SOCKS5" Style="{StaticResource FieldLabel}" />
+                <TextBlock Text="Como Proxifier: el programa sale por este SOCKS. La VPN tiene que estar detrás del proxy, no se elige aquí. El resto de programas sigue la ruta de Windows."
                            Foreground="{StaticResource MutedBrush}"
                            TextWrapping="Wrap"
-                           Margin="0,0,0,14" />
-
-                <StackPanel>
-                    <StackPanel.Style>
-                        <Style TargetType="StackPanel">
-                            <Setter Property="Visibility" Value="Collapsed" />
-                            <Style.Triggers>
-                                <DataTrigger Binding="{Binding IsSocksExit}" Value="True">
-                                    <Setter Property="Visibility" Value="Visible" />
-                                </DataTrigger>
-                            </Style.Triggers>
-                        </Style>
-                    </StackPanel.Style>
+                           Margin="0,0,0,10" />
                 <TextBlock Text="IP del proxy" Style="{StaticResource FieldLabel}" />
                 <TextBox Text="{Binding ProxyHost, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,14" />
 
                 <TextBlock Text="Puerto" Style="{StaticResource FieldLabel}" />
                 <TextBox Text="{Binding ProxyPort, UpdateSourceTrigger=PropertyChanged}" Width="120" HorizontalAlignment="Left" Margin="0,0,0,8" />
-                </StackPanel>
 
                 <StackPanel Orientation="Horizontal">
                     <CheckBox Content="Regla activa" IsChecked="{Binding RuleEnabled}" />

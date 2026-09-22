@@ -38,7 +38,7 @@ public sealed class PacketPipelineTests
     }
 
     [Fact]
-    public void SynDeTeams_PorVpn_TambienSeDesviaAlListener()
+    public void SynDeTeams_PorAdaptadorVpn_YaNoSeDesvia()
     {
         var adapter = TestProfiles.AdapterNode();
         var engine = new RoutingRuleEngine(new ConfigurationDocument
@@ -49,9 +49,8 @@ public sealed class PacketPipelineTests
         var pipeline = Pipeline(engine);
         var plan = pipeline.Decide(Parse(Packet("10.0.0.5", 40000, "52.113.194.132", 443, 0x02)), () => AppPid, Identity);
 
-        Assert.Equal(PacketFate.ReinjectModified, plan.Fate);
-        Assert.Equal(Redirect.Port, plan.NewDestinationPort);
-        Assert.Equal(OutboundKind.NetworkAdapter, pipeline.Flows.TryGet(TransportProtocol.Tcp, IPAddress.Parse("10.0.0.5"), 40000, out var flow) ? flow.Decision.Node!.Kind : OutboundKind.Direct);
+        Assert.Equal(PacketFate.ReinjectUnchanged, plan.Fate);
+        Assert.Equal(0, pipeline.ActiveCount());
     }
 
     [Fact]

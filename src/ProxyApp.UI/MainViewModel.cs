@@ -7,7 +7,6 @@ using System.Windows;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using ProxyApp.Abstractions.Configuration;
-using ProxyApp.Abstractions.Routing;
 using ProxyApp.Core.Interception;
 using ProxyApp.Core.Rules;
 using ProxyApp.Interception;
@@ -37,11 +36,8 @@ public partial class MainViewModel : ObservableObject
         _files = files;
         _rulesPath = rulesPath ?? DefaultRulesPath;
         _ui = SynchronizationContext.Current;
-        RefreshExits();
         LoadRules();
     }
-
-    public ObservableCollection<ExitChoice> Exits { get; } = [];
 
     public ObservableCollection<TrafficRow> Traffic { get; } = [];
 
@@ -81,14 +77,6 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty]
     private bool _bypassLocal = true;
 
-    [ObservableProperty]
-    private ExitChoice? _selectedExit;
-
-    [ObservableProperty]
-    private bool _isSocksExit = true;
-
-    partial void OnSelectedExitChanged(ExitChoice? value) => IsSocksExit = value is null || value.IsSocks;
-
     public void Shutdown()
     {
         _generation++;
@@ -123,12 +111,10 @@ public partial class MainViewModel : ObservableObject
         _editingId = value.RuleId;
         ExecutablePath = "";
         ProcessPattern = value.ProcessName;
-        ProxyHost = value.TargetProxy.Host ?? "";
-        ProxyPort = value.TargetProxy.Port == 0 ? "" : value.TargetProxy.Port.ToString(CultureInfo.InvariantCulture);
-        SelectedExit = value.TargetProxy.Type == ProxyType.Adapter
-            ? Exits.FirstOrDefault(item => !item.IsSocks && string.Equals(item.InterfaceName, value.TargetProxy.Host, StringComparison.OrdinalIgnoreCase))
-              ?? EnsureExit(value.TargetProxy.Host ?? "")
-            : Exits.FirstOrDefault(item => item.IsSocks);
+        ProxyHost = value.TargetProxy.Type == ProxyType.Socks5 ? value.TargetProxy.Host ?? "" : "127.0.0.1";
+        ProxyPort = value.TargetProxy.Type == ProxyType.Socks5 && value.TargetProxy.Port != 0
+            ? value.TargetProxy.Port.ToString(CultureInfo.InvariantCulture)
+            : "";
         RuleEnabled = value.IsEnabled;
         BypassLocal = value.BypassLocalNetwork;
     }
@@ -182,9 +168,8 @@ public partial class MainViewModel : ObservableObject
         SelectedRule = null;
         ExecutablePath = "";
         ProcessPattern = "";
-        ProxyHost = "";
+        ProxyHost = "127.0.0.1";
         ProxyPort = "";
-        SelectedExit = Exits.FirstOrDefault(item => !item.IsSocks) ?? Exits.FirstOrDefault();
         RuleEnabled = true;
         BypassLocal = true;
         StatusMessage = "Nueva regla.";
@@ -200,31 +185,18 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
-        Proxy proxy;
-        if (SelectedExit is { IsSocks: false } vpn)
+        if (!int.TryParse(ProxyPort, NumberStyles.None, CultureInfo.InvariantCulture, out var port))
         {
-            proxy = new Proxy
-            {
-                Type = ProxyType.Adapter,
-                Host = vpn.InterfaceName,
-                Port = 0,
-            };
+            StatusMessage = "El puerto del proxy tiene que estar entre 1 y 65535.";
+            return;
         }
-        else
-        {
-            if (!int.TryParse(ProxyPort, NumberStyles.None, CultureInfo.InvariantCulture, out var port))
-            {
-                StatusMessage = "El puerto del proxy tiene que estar entre 1 y 65535.";
-                return;
-            }
 
-            proxy = new Proxy
-            {
-                Type = ProxyType.Socks5,
-                Host = ProxyHost.Trim(),
-                Port = port,
-            };
-        }
+        var proxy = new Proxy
+        {
+            Type = ProxyType.Socks5,
+            Host = ProxyHost.Trim(),
+            Port = port,
+        };
         var errors = proxy.Validate();
         if (errors.Count > 0)
         {
@@ -307,7 +279,7 @@ public partial class MainViewModel : ObservableObject
         ProcessNetworkFilter? filter = null;
         try
         {
-            broker = new TunnelBroker(WindowsNetworkInterfaces.TryGetIndex, WindowsNetworkInterfaces.Bind);
+            broker = new TunnelBroker();
             broker.TrafficChanged += OnTraffic;
             filter = new ProcessNetworkFilter(
                 _engine,
@@ -320,7 +292,7 @@ public partial class MainViewModel : ObservableObject
             _session = session;
             _broker = broker;
             _filter = filter;
-            StatusMessage = "Motor en marcha. La VPN no se toca. Cierra y abre el programa de la regla para ver tráfico.";
+            StatusMessage = "Motor en marcha. El programa de la regla sale por el SOCKS5. La VPN no se toca.";
 
             var token = session.Token;
             _ = Task.Run(() => broker.RunAsync(Resolve, token));
@@ -393,11 +365,9 @@ public partial class MainViewModel : ObservableObject
     {
         var process = FileName(flow.ExecutablePath);
         var destination = flow.OriginalDestination.ToString();
-        var proxy = flow.Decision.Node?.Kind == OutboundKind.NetworkAdapter
-            ? flow.Decision.Node.Adapter?.InterfaceName ?? "VPN"
-            : flow.Decision.Node?.Host is { Length: > 0 } host
-                ? $"{host}:{flow.Decision.Node.Port}"
-                : "salida";
+        var proxy = flow.Decision.Node?.Host is { Length: > 0 } host
+            ? $"{host}:{flow.Decision.Node.Port}"
+            : "SOCKS5";
         OnTraffic(new TunnelTrafficUpdate(Guid.NewGuid(), DateTimeOffset.Now, process, destination, proxy, "Desviado", 0, 0));
     }
 
@@ -430,48 +400,6 @@ public partial class MainViewModel : ObservableObject
         });
     }
 
-    [RelayCommand]
-    private void RefreshExits()
-    {
-        var previous = SelectedExit?.InterfaceName;
-        var wasSocks = SelectedExit?.IsSocks ?? true;
-        Exits.Clear();
-        Exits.Add(ExitChoice.Socks());
-        foreach (var adapter in WindowsNetworkInterfaces.ListVpn())
-        {
-            Exits.Add(new ExitChoice
-            {
-                Label = adapter.Label,
-                InterfaceName = adapter.Name,
-                IsSocks = false,
-            });
-        }
-
-        SelectedExit = wasSocks
-            ? Exits[0]
-            : Exits.FirstOrDefault(item => string.Equals(item.InterfaceName, previous, StringComparison.OrdinalIgnoreCase))
-              ?? Exits.FirstOrDefault(item => !item.IsSocks)
-              ?? Exits[0];
-    }
-
-    private ExitChoice EnsureExit(string interfaceName)
-    {
-        var existing = Exits.FirstOrDefault(item => string.Equals(item.InterfaceName, interfaceName, StringComparison.OrdinalIgnoreCase));
-        if (existing is not null)
-        {
-            return existing;
-        }
-
-        var created = new ExitChoice
-        {
-            Label = interfaceName + " (no está conectada)",
-            InterfaceName = interfaceName,
-            IsSocks = false,
-        };
-        Exits.Add(created);
-        return created;
-    }
-
     private void LoadRules()
     {
         if (!File.Exists(_rulesPath))
@@ -482,9 +410,32 @@ public partial class MainViewModel : ObservableObject
         try
         {
             _engine.LoadRulesFromJson(_rulesPath);
+            var migrated = false;
             foreach (var rule in _engine.Rules)
             {
-                Rules.Add(rule);
+                if (rule.TargetProxy.Type == ProxyType.Socks5)
+                {
+                    Rules.Add(rule);
+                    continue;
+                }
+
+                migrated = true;
+                Rules.Add(rule with
+                {
+                    IsEnabled = false,
+                    TargetProxy = new Proxy
+                    {
+                        Type = ProxyType.Socks5,
+                        Host = "127.0.0.1",
+                        Port = 1080,
+                    },
+                });
+            }
+
+            if (migrated)
+            {
+                Persist();
+                StatusMessage = "Las reglas de adaptador VPN pasaron a SOCKS5. Pon IP y puerto del proxy y actívalas.";
             }
         }
         catch (Exception ex) when (ex is IOException or System.Text.Json.JsonException or InvalidOperationException)
@@ -583,22 +534,4 @@ public partial class MainViewModel : ObservableObject
             }
         }
     }
-}
-
-public sealed class ExitChoice
-{
-    public static ExitChoice Socks() => new()
-    {
-        Label = "Proxy SOCKS5",
-        InterfaceName = "",
-        IsSocks = true,
-    };
-
-    public required string Label { get; init; }
-
-    public required string InterfaceName { get; init; }
-
-    public bool IsSocks { get; init; }
-
-    public override string ToString() => Label;
 }

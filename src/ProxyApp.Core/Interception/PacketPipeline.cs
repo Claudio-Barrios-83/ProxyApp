@@ -177,9 +177,8 @@ public sealed class PacketPipeline
         {
             RouteAction.Direct => PacketPlan.Unchanged,
             RouteAction.Block => PacketPlan.Drop,
-            // Proxy y adaptador se desvían al listener. El socket de salida, no el de la
-            // aplicación, es el que se ata a la VPN. El resto del sistema no cambia de ruta.
-            RouteAction.Proxy or RouteAction.BindAdapter => Proxy(packet, pid.Value, identity.Value, decision),
+            RouteAction.BindAdapter => PacketPlan.Unchanged,
+            RouteAction.Proxy => Proxy(packet, pid.Value, identity.Value, decision),
             _ => PacketPlan.Unchanged,
         };
     }
