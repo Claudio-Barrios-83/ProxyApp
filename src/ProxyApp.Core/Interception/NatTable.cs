@@ -78,6 +78,14 @@ public sealed class NatTable
         }
     }
 
+    public IPEndPoint[] Clients()
+    {
+        lock (_gate)
+        {
+            return _byClient.Values.Select(entry => entry.Flow.Client).ToArray();
+        }
+    }
+
     public void Remove(TransportProtocol protocol, IPAddress clientAddress, int clientPort)
     {
         lock (_gate)

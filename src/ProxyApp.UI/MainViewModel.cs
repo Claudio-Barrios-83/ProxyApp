@@ -320,7 +320,7 @@ public partial class MainViewModel : ObservableObject
             _session = session;
             _broker = broker;
             _filter = filter;
-            StatusMessage = "Motor en marcha. Cierra y abre el programa para que use conexiones nuevas. El registro está en %LocalAppData%\\ProxyApp\\engine.log.";
+            StatusMessage = "Motor en marcha. La VPN no se toca. Cierra y abre el programa de la regla para ver tráfico.";
 
             var token = session.Token;
             _ = Task.Run(() => broker.RunAsync(Resolve, token));

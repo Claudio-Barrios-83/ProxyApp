@@ -132,23 +132,19 @@ public sealed class PacketPipeline
         }
 
         // Un segmento TCP sin flujo y sin SYN pertenece a una conexión que no
-        // vimos nacer: ya no se puede secuestrar. Se devuelve sin consultar
-        // el PID. El identificador llega de la capa SOCKET, no de una tabla.
+        // vimos nacer: ya no se puede secuestrar.
         if (packet.Protocol == TransportProtocol.Tcp && !packet.IsInitialSyn)
         {
             return PacketPlan.Unchanged;
         }
 
-        // El UDP que llega hasta aquí no tiene flujo. Solo interesa si es de un
-        // proceso con regla, y el PID del UDP lo da la capa SOCKET, no una
-        // tabla. Si todavía no está, sale tal cual: retener o demorar el
-        // datagrama de WireGuard deja a ProtonVPN en "Conectando".
+        // Sin PID no se retiene. ProtonVPN abre TCP (API, stealth) al conectar:
+        // si el SYN se queda 100 ms en cola, la VPN se queda en "Conectando".
+        // El evento SOCKET suele llegar antes; si no, esa conexión sale directa.
         var pid = resolvePid();
         if (pid is null)
         {
-            return packet.Protocol == TransportProtocol.Tcp
-                ? PacketPlan.Hold
-                : PacketPlan.Unchanged;
+            return PacketPlan.Unchanged;
         }
 
         if (pid.Value == _engineProcessId || IsPassthrough(packet))
@@ -158,6 +154,11 @@ public sealed class PacketPipeline
 
         var identity = resolveIdentity(pid.Value);
         if (identity is null)
+        {
+            return PacketPlan.Unchanged;
+        }
+
+        if (IsVpnProcess(identity.Value.ExecutablePath))
         {
             return PacketPlan.Unchanged;
         }
@@ -292,6 +293,22 @@ public sealed class PacketPipeline
                packet.Protocol == TransportProtocol.Udp &&
                packet.Source.Equals(_udpRelay.Address) &&
                packet.SourcePort == _udpRelay.Port;
+    }
+
+    private static readonly string[] VpnProcessHints =
+    [
+        "proton", "wireguard", "wintun", "openvpn", "forticlient", "fortivpn",
+        "vpnui", "vpnagent", "cscosrv", "anyconnect", "tap-windows",
+    ];
+
+    internal static bool IsVpnProcess(string executablePath)
+    {
+        if (string.IsNullOrWhiteSpace(executablePath))
+        {
+            return false;
+        }
+
+        return VpnProcessHints.Any(hint => executablePath.Contains(hint, StringComparison.OrdinalIgnoreCase));
     }
 
     private bool IsPassthrough(ParsedIpv4Packet packet)

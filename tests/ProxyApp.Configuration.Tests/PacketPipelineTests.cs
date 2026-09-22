@@ -141,12 +141,25 @@ public sealed class PacketPipelineTests
     }
 
     [Fact]
-    public void SinPid_ElPrimerSynSeRetiene_YUnAckSueltoPasa()
+    public void SinPid_ElSynSaleSinRetener_ParaNoTumbarLaVpn()
     {
         var pipeline = Pipeline();
 
-        Assert.Equal(PacketFate.Hold, pipeline.Decide(Parse(Packet("10.0.0.5", 40000, "1.1.1.1", 443, 0x02)), () => null, Identity).Fate);
+        Assert.Equal(PacketFate.ReinjectUnchanged, pipeline.Decide(Parse(Packet("10.0.0.5", 40000, "1.1.1.1", 443, 0x02)), () => null, Identity).Fate);
         Assert.Equal(PacketFate.ReinjectUnchanged, pipeline.Decide(Parse(Packet("10.0.0.5", 40000, "1.1.1.1", 443, 0x10)), () => null, Identity).Fate);
+    }
+
+    [Fact]
+    public void SynDeProtonVpn_PasaSinDesviar()
+    {
+        var pipeline = Pipeline();
+        var plan = pipeline.Decide(
+            Parse(Packet("10.0.0.5", 40000, "185.70.41.1", 443, 0x02)),
+            () => 99,
+            _ => new ProcessIdentity(@"C:\Program Files\Proton\ProtonVPN.exe", null));
+
+        Assert.Equal(PacketFate.ReinjectUnchanged, plan.Fate);
+        Assert.Equal(0, pipeline.ActiveCount());
     }
 
     [Fact]
@@ -188,7 +201,7 @@ public sealed class PacketPipelineTests
     }
 
     [Fact]
-    public void MapaDeSockets_DesbloqueaElSynRetenido()
+    public void MapaDeSockets_IdentificaElProcesoAntesDelSyn()
     {
         var map = new SocketProcessMap();
         var pipeline = Pipeline();
@@ -198,7 +211,7 @@ public sealed class PacketPipelineTests
             ? pid
             : null;
 
-        Assert.Equal(PacketFate.Hold, pipeline.Decide(syn, Resolve, Identity).Fate);
+        Assert.Equal(PacketFate.ReinjectUnchanged, pipeline.Decide(syn, Resolve, Identity).Fate);
 
         map.Connected(TransportProtocol.Tcp, syn.Source, syn.SourcePort, syn.Destination, syn.DestinationPort, AppPid);
 

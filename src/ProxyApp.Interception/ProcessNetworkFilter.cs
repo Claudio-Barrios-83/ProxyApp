@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
 using ProxyApp.Abstractions.Configuration;
@@ -70,7 +71,6 @@ namespace ProxyApp.Interception;
 public sealed class ProcessNetworkFilter : IDisposable
 {
     private const string SocketEvents = "(event == CONNECT or event == CLOSE) and (tcp or udp)";
-    private static readonly TimeSpan PidWait = TimeSpan.FromMilliseconds(100);
 
     private readonly PacketPipeline _pipeline;
     private readonly SocketProcessMap _sockets = new();
@@ -79,14 +79,14 @@ public sealed class ProcessNetworkFilter : IDisposable
     private readonly IFilterTrace? _trace;
     private readonly CancellationTokenSource _stop = new();
     private readonly object _sendGate = new();
-    private readonly object _holdGate = new();
-    private readonly Queue<HeldPacket> _held = new();
     private readonly int _engineProcessId;
-    private readonly string _networkFilter;
+    private readonly IPEndPoint _tcpRedirect;
 
-    private Timer? _holdTimer;
     private WinDivert? _network;
     private WinDivert? _socketHandle;
+    private readonly List<WinDivert> _flowHandles = [];
+    private readonly HashSet<string> _capturedClients = [];
+    private readonly object _widenGate = new();
     private int _started;
     private long _seen;
 
@@ -108,7 +108,7 @@ public sealed class ProcessNetworkFilter : IDisposable
         _identities = identities;
         _ = connectionPids;
         _trace = trace;
-        _networkFilter = BuildNetworkFilter(udpRelay is not null);
+        _tcpRedirect = tcpRedirect;
         _pipeline = new PacketPipeline(
             rules,
             tcpRedirect,
@@ -127,15 +127,32 @@ public sealed class ProcessNetworkFilter : IDisposable
     public int ActiveFlowCount => _pipeline.Flows.Count;
 
     /// <summary>
-    /// Qué se desvía a modo usuario. Todo lo que entre aquí lo tiene que volver
-    /// a inyectar este proceso: si la cola se llena o el orden se altera, la
-    /// conexión afectada muere. El túnel de una VPN es UDP, y ProtonVPN llega a
-    /// levantar WireGuard sobre el puerto 443, así que no hay puerto UDP seguro
-    /// de capturar. Sin relay de UDP no se toca ni un datagrama: solo TCP, que
-    /// es lo único que este motor sabe secuestrar.
+    /// Solo el SYN inicial, las respuestas del listener y los clientes ya
+    /// desviados. ProtonVPN habla TCP al conectar: si capturamos todo el TCP
+    /// de la máquina, esa negociación entra en nuestra cola y la VPN no sube.
     /// </summary>
-    public static string BuildNetworkFilter(bool hasUdpRelay) =>
-        hasUdpRelay ? "outbound and ip and (tcp or udp)" : "outbound and ip and tcp";
+    public static string BuildNetworkFilter(IPEndPoint redirect, IReadOnlyList<IPEndPoint>? clients = null)
+    {
+        ArgumentNullException.ThrowIfNull(redirect);
+        var clauses = new List<string> { "(tcp.Syn and not tcp.Ack)" };
+        if (redirect.Address.AddressFamily == AddressFamily.InterNetwork)
+        {
+            clauses.Add($"(ip.SrcAddr == {redirect.Address} and tcp.SrcPort == {redirect.Port})");
+        }
+
+        if (clients is not null)
+        {
+            foreach (var client in clients)
+            {
+                if (client.Address.AddressFamily == AddressFamily.InterNetwork && client.Port > 0)
+                {
+                    clauses.Add($"(ip.SrcAddr == {client.Address} and tcp.SrcPort == {client.Port})");
+                }
+            }
+        }
+
+        return $"outbound and ip and tcp and ({string.Join(" or ", clauses)})";
+    }
 
     /// <summary>
     /// Lo consulta el listener al aceptar. La clave es el extremo remoto del
@@ -164,7 +181,7 @@ public sealed class ProcessNetworkFilter : IDisposable
         try
         {
             _socketHandle = new WinDivert(SocketEvents, WinDivert.Layer.Socket, 0, WinDivert.Flag.Sniff | WinDivert.Flag.RecvOnly);
-            _network = new WinDivert(_networkFilter, WinDivert.Layer.Network, _settings.WinDivertPriority, 0);
+            _network = OpenNetwork(BuildNetworkFilter(_tcpRedirect));
         }
         catch
         {
@@ -172,9 +189,6 @@ public sealed class ProcessNetworkFilter : IDisposable
             _socketHandle = null;
             throw;
         }
-
-        _network.QueueLength = 8192;
-        _network.QueueTime = 8000;
 
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _stop.Token);
         var token = linked.Token;
@@ -185,8 +199,7 @@ public sealed class ProcessNetworkFilter : IDisposable
         };
         socketThread.Start();
 
-        _trace?.Info($"Filtro de red: {_networkFilter}");
-        _holdTimer = new Timer(_ => DrainHeld(), null, dueTime: 15, period: 15);
+        _trace?.Info($"Filtro de red: {BuildNetworkFilter(_tcpRedirect)}");
 
         var buffer = new byte[0xFFFF];
         var addresses = new WinDivertAddress[1];
@@ -214,8 +227,6 @@ public sealed class ProcessNetworkFilter : IDisposable
         }
         finally
         {
-            _holdTimer.Dispose();
-            DrainHeld(flush: true);
             try
             {
                 socketThread.Join(TimeSpan.FromSeconds(2));
@@ -231,6 +242,16 @@ public sealed class ProcessNetworkFilter : IDisposable
         _stop.Cancel();
         Shutdown(_socketHandle);
         Shutdown(_network);
+        lock (_widenGate)
+        {
+            foreach (var handle in _flowHandles)
+            {
+                Shutdown(handle);
+            }
+
+            _flowHandles.Clear();
+        }
+
         _stop.Dispose();
     }
 
@@ -242,6 +263,7 @@ public sealed class ProcessNetworkFilter : IDisposable
             return;
         }
 
+        var before = _pipeline.Flows.Count;
         var plan = _pipeline.Decide(parsed, () => ResolvePid(parsed), _identities.TryResolve);
         Interlocked.Increment(ref _seen);
         if (parsed.Protocol == TransportProtocol.Tcp && parsed.IsInitialSyn)
@@ -249,13 +271,14 @@ public sealed class ProcessNetworkFilter : IDisposable
             LogSyn(parsed, plan);
         }
 
-        if (plan.Fate == PacketFate.Hold)
-        {
-            Hold(packet, address);
-            return;
-        }
-
         Apply(network, packet, address, plan);
+
+        // El SYN ya se reinyectó por el handle que lo capturó. El ACK siguiente
+        // sale hacia el servidor real: hay que ampliar el filtro ahora, no después.
+        if (plan.Fate == PacketFate.ReinjectModified && _pipeline.Flows.Count > before)
+        {
+            WidenCapture();
+        }
     }
 
     /// <summary>
@@ -285,10 +308,6 @@ public sealed class ProcessNetworkFilter : IDisposable
 
             case PacketFate.ReinjectUnchanged:
                 Send(network, packet, address);
-                return;
-
-            case PacketFate.Hold:
-                Hold(packet, address);
                 return;
 
             case PacketFate.ReinjectModified:
@@ -359,84 +378,84 @@ public sealed class ProcessNetworkFilter : IDisposable
         return null;
     }
 
-    private void Hold(ReadOnlySpan<byte> packet, WinDivertAddress address)
+    private void WidenCapture()
     {
-        var copy = packet.ToArray();
-        lock (_holdGate)
+        foreach (var client in _pipeline.Flows.Clients())
         {
-            if (_held.Count >= 256)
+            var key = string.Create(CultureInfo.InvariantCulture, $"{client.Address}:{client.Port}");
+            lock (_widenGate)
             {
-                var oldest = _held.Dequeue();
-                Send(_network!, oldest.Packet, oldest.Address);
+                if (!_capturedClients.Add(key))
+                {
+                    continue;
+                }
             }
 
-            _held.Enqueue(new HeldPacket(copy, address, DateTime.UtcNow + PidWait));
+            var filter = string.Create(
+                CultureInfo.InvariantCulture,
+                $"outbound and ip and tcp and ip.SrcAddr == {client.Address} and tcp.SrcPort == {client.Port}");
+            try
+            {
+                var handle = OpenNetwork(filter);
+                lock (_widenGate)
+                {
+                    _flowHandles.Add(handle);
+                }
+
+                var thread = new Thread(() => FlowLoop(handle))
+                {
+                    IsBackground = true,
+                    Name = "ProxyApp.Flow." + client.Port,
+                };
+                thread.Start();
+                _trace?.Info($"Filtro extra: {filter}");
+            }
+            catch (Exception ex)
+            {
+                lock (_widenGate)
+                {
+                    _capturedClients.Remove(key);
+                }
+
+                _trace?.Failure("No se pudo abrir el filtro del flujo.", ex);
+            }
         }
     }
 
-    private void DrainHeld(bool flush = false)
+    private void FlowLoop(WinDivert handle)
     {
-        var network = _network;
-        if (network is null)
+        var buffer = new byte[0xFFFF];
+        var addresses = new WinDivertAddress[1];
+        try
         {
-            return;
-        }
-
-        List<HeldPacket>? retry = null;
-        List<HeldPacket> ready;
-
-        lock (_holdGate)
-        {
-            if (_held.Count == 0)
+            while (!_stop.IsCancellationRequested)
             {
-                return;
-            }
+                var (received, addressCount) = handle.RecvEx(buffer, addresses);
+                if (received == 0 || addressCount == 0)
+                {
+                    continue;
+                }
 
-            ready = new List<HeldPacket>(_held.Count);
-            while (_held.Count > 0)
-            {
-                ready.Add(_held.Dequeue());
+                Handle(handle, buffer.AsSpan(0, (int)received), addresses[0]);
             }
         }
-
-        foreach (var held in ready)
+        catch (WinDivertException) when (_stop.IsCancellationRequested)
         {
-            if (!Ipv4Packet.TryParse(held.Packet, out var parsed))
-            {
-                Send(network, held.Packet, held.Address);
-                continue;
-            }
-
-            var plan = _pipeline.Decide(parsed, () => ResolvePid(parsed), _identities.TryResolve);
-            if (plan.Fate == PacketFate.Hold && !flush && DateTime.UtcNow < held.DeadlineUtc)
-            {
-                (retry ??= []).Add(held);
-                continue;
-            }
-
-            if (plan.Fate == PacketFate.Hold)
-            {
-                // Fail-open: mejor un flujo que se escapa del proxy que un
-                // SYN tragado para siempre.
-                Apply(network, held.Packet, held.Address, PacketPlan.Unchanged);
-                continue;
-            }
-
-            Apply(network, held.Packet, held.Address, plan);
         }
-
-        if (retry is null)
+        catch (Exception ex)
         {
-            return;
+            _trace?.Failure("La captura de un flujo se detuvo.", ex);
         }
+    }
 
-        lock (_holdGate)
+    private WinDivert OpenNetwork(string filter)
+    {
+        var handle = new WinDivert(filter, WinDivert.Layer.Network, _settings.WinDivertPriority, 0)
         {
-            foreach (var held in retry)
-            {
-                _held.Enqueue(held);
-            }
-        }
+            QueueLength = 8192,
+            QueueTime = 8000,
+        };
+        return handle;
     }
 
     private void SocketLoop(WinDivert sockets, CancellationToken cancellationToken)
@@ -548,5 +567,4 @@ public sealed class ProcessNetworkFilter : IDisposable
         divert.Dispose();
     }
 
-    private sealed record HeldPacket(byte[] Packet, WinDivertAddress Address, DateTime DeadlineUtc);
 }
